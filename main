@@ -1,0 +1,144 @@
+Load pre-trained Squeezenet model
+net = squeezenet;
+
+% Specify image size
+inputSize = net.Layers(1).InputSize(1:2);
+imageSize = [227 227 3];
+
+
+% Load images from drone and bird folders
+droneFolder = 'C:\Users\adewa\Documents\objects\Drones';
+birdFolder = 'C:\Users\adewa\Documents\objects\Birds';
+
+droneImages = imageDatastore(droneFolder, 'IncludeSubfolders', true, 'LabelSource', 'foldernames');
+birdImages = imageDatastore(birdFolder, 'IncludeSubfolders', true, 'LabelSource', 'foldernames');
+
+% Display random drone and bird images
+figure
+subplot(1,2,1);
+imshow(readimage(droneImages,randi(numel(droneImages.Files))));
+title('Drone Image');
+subplot(1,2,2);
+imshow(readimage(birdImages,randi(numel(birdImages.Files))));
+title('Bird Image');
+
+% Combine datasets and split into training and test sets
+imds = imageDatastore(cat(1,droneImages.Files,birdImages.Files), 'LabelSource', 'foldernames');
+
+[trainingSet, testSet] = splitEachLabel(imds, 0.7, 'randomized');
+
+% Augment images in training set
+imageAugmenter = imageDataAugmenter( ...
+    'RandRotation',[-10 10], ...
+    'RandXReflection',true, ...
+    'RandYReflection',true);
+augmentedTrainingSet = augmentedImageDatastore(imageSize, trainingSet, 'ColorPreprocessing','gray2rgb');
+augmentedTestSet = augmentedImageDatastore(imageSize, testSet, 'ColorPreprocessing','gray2rgb');
+% Extract features using the squeezenet model
+featureLayer = 'pool10';
+trainingFeatures = activations(net, augmentedTrainingSet, featureLayer, 'MiniBatchSize', 32, 'OutputAs', 'columns');
+
+% Train and test a classifier on the extracted features
+trainingLabels = trainingSet.Labels;
+classifier = fitcecoc(trainingFeatures, trainingLabels, 'Learners', 'linear', 'Coding', 'onevsall', 'ObservationsIn', 'columns');
+
+testFeatures = activations(net, augmentedTestSet, featureLayer, 'MiniBatchSize', 32, 'OutputAs', 'columns');
+testLabels = testSet.Labels;
+predictedLabels = predict(classifier, testFeatures, 'ObservationsIn', 'columns');
+
+% Compute accuracy and confusion matrix
+accuracy = sum(predictedLabels == testLabels)/numel(predictedLabels);
+confMat = confusionmat(testLabels, predictedLabels);
+confMatNormalized = bsxfun(@rdivide, confMat, sum(confMat,2));
+meanAccuracy = mean(diag(confMatNormalized));
+
+% calculate precision, recall and f1 scaore
+numClasses = size(confMat,1);
+precision = zeros(numClasses,1);
+recall = zeros(numClasses,1);
+f1Score = zeros(numClasses,1);
+for i = 1:numClasses
+    tp = confMat(i,i);
+    fp= sum(confMat(:,i))-tp;
+    fn = sum(confMat(i,:))-tp;
+    precision(i) = tp/(tp+fp);
+    recall(i) = tp/(tp+fn);
+    f1Score(i) = 2*(precision(i)*recall(i))/(precision(i)+recall(i));
+end
+
+% Calculate macro-averaged precision, recall, and F1-score
+macroPrecision = mean(precision);
+macroRecall = mean(recall);
+macroF1Score = mean(f1Score);
+% Display results
+disp("Confusion matrix:");
+disp(confMat);
+disp(" ");
+disp("Precision:");
+disp(precision);
+disp("Recall:");
+disp(recall);
+disp("F1-score:");
+disp(f1Score);
+
+figure
+plotconfusion(testLabels, predictedLabels);
+title(sprintf('Accuracy = %.2f%%, Mean Accuracy = %.2f%%', accuracy*100, meanAccuracy*100));
+�
+
+
+
+Appendix II
+% Specify the folder containing the images
+droneFolder = 'C:\Users\adewa\Documents/Drones';
+birdFolder = 'C:\Users\adewa\Documents/Birds';
+
+% Create an image datastore for the images in each folder
+droneDS = imageDatastore(droneFolder);
+birdDS = imageDatastore(birdFolder);
+
+% Resize all images to a fixed size
+imageSize = [227 227 3];
+droneDS = augmentedImageDatastore(imageSize, droneDS,'ColorPreprocessing','gray2rgb');
+birdDS = augmentedImageDatastore(imageSize, birdDS,"ColorPreprocessing","gray2rgb");
+
+% Load the pre-trained network
+net = squeezenet;
+
+% Extract the features from the last convolutional layer
+featureLayer = 'conv10';
+trainingFeaturesDrone = activations(net, droneDS, featureLayer, 'OutputAs', 'rows');
+trainingFeaturesBird = activations(net, birdDS, featureLayer, 'OutputAs', 'rows');
+
+% Create labels for the data
+labelsDrone = repmat({'drone'}, numel(droneDS.Files), 1);
+labelsBird = repmat({'bird'}, numel(birdDS.Files), 1);
+
+% Concatenate the features and labels
+trainingFeatures = [trainingFeaturesDrone; trainingFeaturesBird];
+trainingLabels = [labelsDrone; labelsBird];
+
+% Split the data into training and testing sets
+pctTraining = 0.8; % Percentage of images to use for training
+idx = randperm(numel(trainingLabels));
+trainingIdx = idx(1:round(pctTraining*numel(trainingLabels)));
+testingIdx = idx(round(pctTraining*numel(trainingLabels))+1:end);
+
+xTrain = trainingFeatures(trainingIdx, :);
+yTrain = trainingLabels(trainingIdx);
+
+xTest = trainingFeatures(testingIdx, :);
+yTest = trainingLabels(testingIdx);
+
+
+
+% Train and evaluate different classifiers
+classifiers = {'SVM', 'kNN', 'Tree'};
+
+for i = 1:numel(classifiers)
+    classifier = fitcecoc(xTrain, yTrain, 'Learners', classifiers{i});
+    yPred = predict(classifier, xTest);
+    accuracy = mean(strcmp(yPred, yTest));
+    fprintf('%s classifier accuracy: %.2f%%\n', classifiers{i}, accuracy*100);
+    
+end
